@@ -122,3 +122,36 @@ from(bucket: "powertag")
 
 - Improve ash protocol error handling
 - Finish MQTT support
+
+## Home Assistant & Docker Support (Enhanced Fork)
+
+This fork significantly enhances the original project by adding robust Docker support and native Home Assistant integration.
+
+### Key Features of this Fork
+*   **Dockerized Solution**: A production-ready `Dockerfile` and `docker-compose.yml` that runs both the C daemon and a Python supervisor.
+*   **Native Home Assistant Discovery**: Automatically creates devices and sensors in Home Assistant using MQTT Auto-Discovery. No manual YAML configuration required.
+*   **Live Control**: Scan and Pair commands can be triggered directly from Home Assistant buttons without stopping the service.
+*   **Data Integrity**: MQTT topics are split by cluster (`electrical`, `metering`, `basic`) to prevent data overwrites, ensuring Firmware Version, Voltage, and Energy readings coexist peacefully.
+*   **Metadata Sync**: Automatically extracts and reports Firmware Version, Model, and Serial Number to Home Assistant.
+
+### Installation
+
+1.  **Clone the repository**:
+    ```bash
+    git clone https://github.com/pissten/powertagd_homeassistant.git
+    cd powertagd_homeassistant
+    ```
+
+2.  **Configure `docker-compose.yml`**:
+    Edit the file to set your MQTT broker details and serial device path.
+
+3.  **Run with Docker**:
+    ```bash
+    docker compose up -d --build
+    ```
+
+4.  **Device Discovery**:
+    *   Navigate to **Home Assistant > Settings > Devices & Services > MQTT**.
+    *   You will see a "PowerTag Zigbee Gateway" device.
+    *   Use the "Start Pairing" button on this gateway device to pair your PowerTags.
+    *   New PowerTag devices will appear automatically as they are paired.

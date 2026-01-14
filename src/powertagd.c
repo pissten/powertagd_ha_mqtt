@@ -66,6 +66,22 @@ static struct {
 
 static struct mosquitto *mosq;
 static volatile bool mosq_connected = false;
+static volatile enum { CMD_NONE, CMD_SCAN, CMD_PAIR } pending_cmd = CMD_NONE;
+
+static void on_message(struct mosquitto *mosq, void *obj, const struct mosquitto_message *msg)
+{
+	if (msg->payloadlen == 0) return;
+
+	LOG_INFO("MQTT Command received: %s", msg->topic);
+
+	if (strcmp(msg->topic, "powertag/cmd/scan") == 0) {
+		LOG_INFO("Scheduling Energy Scan...");
+		pending_cmd = CMD_SCAN;
+	} else if (strcmp(msg->topic, "powertag/cmd/pair") == 0) {
+		LOG_INFO("Scheduling Pairing Mode...");
+		pending_cmd = CMD_PAIR;
+	}
+}
 
 /* Callback called when the client receives a CONNACK message from the broker. */
 static void mosq_on_connect(struct mosquitto *mosq, void *obj, int reason_code)
@@ -79,6 +95,7 @@ static void mosq_on_connect(struct mosquitto *mosq, void *obj, int reason_code)
 	}
 
 	mosq_connected = true;
+	mosquitto_subscribe(mosq, NULL, "powertag/cmd/+", 0);
 }
 
 static int mqtt_client_init(void)
@@ -98,6 +115,7 @@ static int mqtt_client_init(void)
 
 	/* Configure callbacks. This should be done before connecting ideally. */
 	mosquitto_connect_callback_set(mosq, mosq_on_connect);
+	mosquitto_message_callback_set(mosq, on_message);
 	//mosquitto_publish_callback_set(mosq, on_publish);
 
 	mosquitto_username_pw_set(mosq, mqtt_opts.username, mqtt_opts.password);
@@ -249,6 +267,55 @@ static void write_influxdb(const char *fmt, va_list ap)
 	pthread_mutex_unlock(&influx_ctx.lock);
 }
 
+static void publish_mqtt(char *topic, char *json);
+static void write_mqtt_report(unsigned int srcid, uint16_t cluster_id, long unsigned int timestamp, char *state)
+{
+	cJSON *jsonObject = cJSON_CreateObject();
+
+	char *end_str;
+	char *token = strtok_r(state, ",", &end_str);
+
+	while (token != NULL)
+	{
+		char *key = strtok(token, "=");
+		char *value = strtok(NULL, "=");
+
+		if (key != NULL && value != NULL) {
+            // Strip surrounding quotes if present (double-quote fix)
+            size_t vlen = strlen(value);
+            if (vlen >= 2 && value[0] == '"' && value[vlen-1] == '"') {
+                value[vlen-1] = '\0';
+                value++;
+            }
+
+            // Use AddString to ensure valid JSON even for non-numeric values
+			cJSON_AddStringToObject(jsonObject, key, value);
+		}
+		token = strtok_r(NULL, ",", &end_str);
+	}
+
+	char *jsonStr = cJSON_PrintUnformatted(jsonObject);
+
+	char topic[100];
+    const char *cluster_name = "unknown";
+    
+    switch (cluster_id) {
+        case 0x0000: cluster_name = "basic"; break;
+        case 0x0702: cluster_name = "metering"; break;
+        case 0x0b04: cluster_name = "electrical"; break;
+        default:     cluster_name = "other"; break;
+    }
+
+    // Topic: powertag/<id>/<cluster>
+	snprintf(topic, 100, "powertag/%08x/%s", srcid, cluster_name);
+
+	publish_mqtt(topic, jsonStr);
+
+	free(jsonStr);
+	cJSON_Delete(jsonObject);
+}
+
+
 static void publish_mqtt(char *topic, char *json)
 {
 	char payload[200];
@@ -291,38 +358,6 @@ static void write_report(const char *fmt, ...)
 	va_end(ap);
 }
 
-static void write_mqtt_report(unsigned int srcid, long unsigned int timestamp, char *state)
-{
-	cJSON *jsonObject = cJSON_CreateObject();
-
-	char *end_str;
-	char *token = strtok_r(state, ",", &end_str);
-
-	while (token != NULL)
-	{
-		// char *end_token;
-		char *key = strtok(token, "=");
-		char *value = strtok(NULL, "=");
-
-		if (key != NULL && value != NULL) {
-			cJSON_AddItemToObject(jsonObject, key, cJSON_CreateRaw(value));
-		}
-		token = strtok_r(NULL, ",", &end_str);
-	}
-
-	char *jsonStr = cJSON_Print(jsonObject);
-	//printf("%s\n%s\n", state, jsonStr);
-
-	char topic[100];
-	snprintf(topic, 100, "powertagd/%08x/%s", srcid, state);
-
-	publish_mqtt(topic, jsonStr);
-
-	free(jsonStr);
-	cJSON_Delete(jsonObject);
-
-	//write_report("powertag/0x%08x %s %lu\n", srcid, str, timestamp);
-}
 
 
 static bool handle_rx_gp_frame(const EzspFrame *frame)
@@ -387,6 +422,22 @@ static bool handle_raw_tx_complete_callback(const EzspFrame *frame)
 static bool ezsp_callback_handler(const EzspFrame *frame)
 {
 	switch (frame->hdr.frame_id) {
+    case EZSP_SCAN_COMPLETE_HANDLER:
+		{
+            int channel = frame->data[0]; 
+            int rssi = (int8_t)frame->data[1];
+            if (channel > 0) {
+			    LOG_INFO("Scan result: Channel %d RSSI %d", channel, rssi);
+                char payload[64];
+                snprintf(payload, sizeof(payload), "{\"channel\":%d, \"rssi\":%d}", channel, rssi);
+                #ifdef ENABLE_MQTT
+                publish_mqtt("powertag/scan_result", payload);
+                #endif
+            } else {
+                LOG_INFO("Scan Complete");
+            }
+		}
+		break;
 	case EZSP_GP_INCOMING_MESSAGE_HANDLER:
 		(void)handle_rx_gp_frame(frame);
 		break;
@@ -709,7 +760,7 @@ static void gpf_process_mfr_specific_reporting(const GpFrame *f)
 
 	switch (output_type) {
 	case OUTPUT_MQTT:
-		write_mqtt_report(srcid, timestamp, str);
+		write_mqtt_report(srcid, cluster_id, timestamp, str);
 		break;
 	default:
 		write_report("powertag,id=0x%08x %s %lu\n", srcid, str, timestamp);
@@ -956,7 +1007,18 @@ int main(int argc, char **argv)
 #endif
 
 	while (1) {
-		ezsp_read_callbacks(3000);
+        if (pending_cmd == CMD_SCAN) {
+            LOG_INFO("Starting Energy Scan (all channels)...");
+            pending_cmd = CMD_NONE;
+            ezsp_start_energy_scan(0);
+        }
+        else if (pending_cmd == CMD_PAIR) {
+            LOG_INFO("Enabling Pairing (Commissioning) Mode...");
+            pending_cmd = CMD_NONE;
+            gp_set_allow_commissioning(true);
+        }
+
+		ezsp_read_callbacks(200); 
 	}
 
 	serial_close();
