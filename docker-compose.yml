@@ -8,11 +8,11 @@ services:
       # Recommended: Use by-id for stability
       - /dev/serial/by-id/usb-ITEAD_SONOFF_Zigbee_3.0_USB_Dongle_Plus_V2_20220714163913-if00:/dev/ttyACM0
     environment:
-      - MQTT_HOST=localhost
+      - MQTT_HOST=10.0.0.53
       - MQTT_PORT=1883
-      - MQTT_USER=your-user
-      - MQTT_PASSWORD=your-password
+      - MQTT_USER=mqtt
+      - MQTT_PASSWORD=mqtt
       - SERIAL_DEV=/dev/ttyACM0
       # Optional: Extra args for powertagd debugging logs
-      - EXTRA_ARGS=-v
+      #- EXTRA_ARGS=-v
     # network_mode: host # Uncomment if needed for mDNS or ease of access

@@ -12,6 +12,7 @@ DISCOVERY_PREFIX = os.getenv("DISCOVERY_PREFIX", "homeassistant")
 
 import sys
 sys.stdout.reconfigure(line_buffering=True) # Force unbuffered output for logs
+DEBUG = os.getenv("DEBUG", "false").lower() == "true"
 
 SENSOR_CONFIG = {
     "total_power_active": {
@@ -27,13 +28,42 @@ SENSOR_CONFIG = {
         "device_class": "current", "unit": "A", "state_class": "measurement", "name": "Current", "topic": "electrical"
     },
     "power_factor": {
-        "device_class": "power_factor", "unit": "%", "state_class": "measurement", "name": "Power Factor", "topic": "electrical"
+        "device_class": "power_factor", "unit": "%", "state_class": "measurement", "name": "Power Factor", "topic": "metering"
     },
-    "total_energy_rx": {
-        "device_class": "energy", "unit": "kWh", "state_class": "total_increasing", "name": "Total Energy RX", "topic": "metering"
+    "total_energy_export": {
+        "device_class": "energy", "unit": "kWh", "state_class": "total_increasing", "name": "Energy Export", "topic": "metering"
     },
-    "total_energy_tx": {
-        "device_class": "energy", "unit": "kWh", "state_class": "total_increasing", "name": "Total Energy TX", "topic": "metering"
+    "total_energy_import": {
+        "device_class": "energy", "unit": "kWh", "state_class": "total_increasing", "name": "Energy Import", "topic": "metering"
+    },
+    "lqi": {
+        "name": "Link Quality",
+        "topic": "electrical", # LQI is sent with all updates, pick one
+        "unit": "lqi",
+        "device_class": None, # LQI has no standard class, maybe "signal_strength" if dBm
+        "state_class": "measurement",
+        "icon": "mdi:signal",
+        "entity_category": "diagnostic"
+    },
+    # Phase 2
+    "voltage_p2": {
+        "device_class": "voltage", "unit": "V", "state_class": "measurement", "name": "Voltage L2", "topic": "electrical"
+    },
+    "current_p2": {
+        "device_class": "current", "unit": "A", "state_class": "measurement", "name": "Current L2", "topic": "electrical"
+    },
+    "power_p2_active": {
+        "device_class": "power", "unit": "W", "state_class": "measurement", "name": "Active Power L2", "topic": "electrical"
+    },
+    # Phase 3
+    "voltage_p3": {
+        "device_class": "voltage", "unit": "V", "state_class": "measurement", "name": "Voltage L3", "topic": "electrical"
+    },
+    "current_p3": {
+        "device_class": "current", "unit": "A", "state_class": "measurement", "name": "Current L3", "topic": "electrical"
+    },
+    "power_p3_active": {
+        "device_class": "power", "unit": "W", "state_class": "measurement", "name": "Active Power L3", "topic": "electrical"
     }
 }
 
@@ -97,7 +127,8 @@ def on_connect(client, userdata, flags, rc):
 
 def on_message(client, userdata, msg):
     # Expected topic: powertag/<device_id>/<cluster>
-    print(f"Rx: {msg.topic}", flush=True)
+    if DEBUG:
+        print(f"Rx: {msg.topic}", flush=True)
     try:
         parts = msg.topic.split("/")
         if len(parts) != 3:
@@ -178,6 +209,12 @@ def ensure_device_configured(client, device_id):
             "state_class": config["state_class"],
             "value_template": f"{{{{ value_json.{metric} }}}}"
         }
+
+        if config.get("icon"):
+            payload["icon"] = config["icon"]
+
+        if config.get("entity_category"):
+            payload["entity_category"] = config["entity_category"]
         
         # Publish discovery config with Retain=True
         print(f"Publishing discovery for {metric}", flush=True)

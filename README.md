@@ -132,7 +132,9 @@ This fork significantly enhances the original project by adding robust Docker su
 *   **Native Home Assistant Discovery**: Automatically creates devices and sensors in Home Assistant using MQTT Auto-Discovery. No manual YAML configuration required.
 *   **Live Control**: Scan and Pair commands can be triggered directly from Home Assistant buttons without stopping the service.
 *   **Data Integrity**: MQTT topics are split by cluster (`electrical`, `metering`, `basic`) to prevent data overwrites, ensuring Firmware Version, Voltage, and Energy readings coexist peacefully.
+*   **Enhanced Sensors**: Added support for **Link Quality (LQI)** (Diagnostic category), **3-Phase Sensors** (L2, L3), and clear **Energy Import/Export** naming.
 *   **Metadata Sync**: Automatically extracts and reports Firmware Version, Model, and Serial Number to Home Assistant.
+*   **Clean Logs**: "Rx" logs are silenced by default to reduce noise (enable via `DEBUG=true`).
 
 ### Installation
 

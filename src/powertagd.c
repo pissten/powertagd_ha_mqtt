@@ -760,6 +760,11 @@ static void gpf_process_mfr_specific_reporting(const GpFrame *f)
 
 	switch (output_type) {
 	case OUTPUT_MQTT:
+		{
+			char lqi_append[32];
+			snprintf(lqi_append, sizeof(lqi_append), ",lqi=%u", f->gpd_link);
+			strncat(str, lqi_append, sizeof(str) - strlen(str) - 1);
+		}
 		write_mqtt_report(srcid, cluster_id, timestamp, str);
 		break;
 	default:
