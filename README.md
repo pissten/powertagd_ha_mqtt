@@ -157,3 +157,19 @@ This fork significantly enhances the original project by adding robust Docker su
     *   You will see a "PowerTag Zigbee Gateway" device.
     *   Use the "Start Pairing" button on this gateway device to pair your PowerTags.
     *   New PowerTag devices will appear automatically as they are paired.
+
+### Arbeidsmappe og web-oversikt
+
+Containeren lagrer enhetsnavn og siste verdier i `/opt/powertagd` på serveren. Mappen må finnes før oppstart:
+
+```bash
+mkdir -p /opt/powertagd
+```
+
+Oversikten kjører på port **8092** (8090 er opptatt av en annen tjeneste):
+
+`http://10.0.0.53:8092`
+
+Der kan du se enheter og entiteter, starte kanalsøk og paring, og velge navn. Standard MQTT-emne er fortsatt `powertag/<enhets-id>/...`, så eksisterende Home Assistant-entiteter blir værende. Velg «Publiser med valgt navn» bare når emnet skal følge navnet.
+
+MQTT-tilkoblingen prøves på nytt av seg selv hvis brokeren er nede. Både måleprogrammet og registreringen mot Home Assistant blir stående.

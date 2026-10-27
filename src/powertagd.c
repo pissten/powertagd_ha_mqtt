@@ -87,15 +87,22 @@ static void on_message(struct mosquitto *mosq, void *obj, const struct mosquitto
 static void mosq_on_connect(struct mosquitto *mosq, void *obj, int reason_code)
 {
 	if (reason_code != 0) {
-		/* If the connection fails for any reason, we don't want to keep on
-		 * retrying in this example, so disconnect. Without this, the client
-		 * will attempt to reconnect. */
-		mosquitto_disconnect(mosq);
-		LOG_FATAL("could not connect to MQTT broker: %s", mosquitto_connack_string(reason_code));
+		/* Stay running. libmosquitto reconnects on its own. */
+		mosq_connected = false;
+		LOG_ERR("could not connect to MQTT broker: %s (retrying)", mosquitto_connack_string(reason_code));
+		return;
 	}
 
 	mosq_connected = true;
 	mosquitto_subscribe(mosq, NULL, "powertag/cmd/+", 0);
+	LOG_INFO("Connected to MQTT broker");
+}
+
+static void mosq_on_disconnect(struct mosquitto *mosq, void *obj, int rc)
+{
+	mosq_connected = false;
+	if (rc != 0)
+		LOG_WARN("MQTT disconnected (%s), retrying", mosquitto_strerror(rc));
 }
 
 static int mqtt_client_init(void)
@@ -115,35 +122,38 @@ static int mqtt_client_init(void)
 
 	/* Configure callbacks. This should be done before connecting ideally. */
 	mosquitto_connect_callback_set(mosq, mosq_on_connect);
+	mosquitto_disconnect_callback_set(mosq, mosq_on_disconnect);
 	mosquitto_message_callback_set(mosq, on_message);
 	//mosquitto_publish_callback_set(mosq, on_publish);
 
 	mosquitto_username_pw_set(mosq, mqtt_opts.username, mqtt_opts.password);
+	/* Back off from 2s up to 30s so a broker restart does not kill the dongle loop. */
+	mosquitto_reconnect_delay_set(mosq, 2, 30, true);
 	/*
 	 * Connect on port 1883, with a keepalive of 60 seconds.
-	 * This call makes the socket connection only, it does not complete the MQTT
-	 * CONNECT/CONNACK flow, you should use mosquitto_loop_start() or
-	 * mosquitto_loop_forever() for processing net traffic.
+	 * connect_async does not block, and does not tear down the Zigbee stack
+	 * when the broker is down. mosquitto_loop_start() completes the handshake.
 	 */
 	int port = (mqtt_opts.port == NULL) ? 1883 : atoi(mqtt_opts.port);
-	int rc = mosquitto_connect(mosq, mqtt_opts.host, port, 60);
-	if (rc != MOSQ_ERR_SUCCESS) {
-		mosquitto_destroy(mosq);
-		LOG_ERR("could not connect to MQTT broker: %s", mosquitto_strerror(rc));
-		return 1;
+	int rc;
+	for (;;) {
+		rc = mosquitto_connect_async(mosq, mqtt_opts.host, port, 60);
+		if (rc == MOSQ_ERR_SUCCESS)
+			break;
+		LOG_ERR("could not start MQTT connection: %s (retrying)", mosquitto_strerror(rc));
+		sleep(5);
 	}
 
 	/* Run the network loop in a background thread, this call returns quickly. */
 	rc = mosquitto_loop_start(mosq);
 	if (rc != MOSQ_ERR_SUCCESS) {
 		mosquitto_destroy(mosq);
+		mosq = NULL;
 		LOG_ERR("mosquitto_loop_start() failed: %s", mosquitto_strerror(rc));
 		return 1;
 	}
 
-	while (mosq_connected != 1)
-		usleep(500000);
-	LOG_INFO("Connected to MQTT broker");
+	LOG_INFO("MQTT client started for %s:%d", mqtt_opts.host, port);
 	return 0;
 }
 
@@ -320,6 +330,13 @@ static void publish_mqtt(char *topic, char *json)
 {
 	char payload[200];
 	int rc;
+
+	if (!mosq_connected || mosq == NULL) {
+		static unsigned skipped;
+		if (skipped++ % 30 == 0)
+			LOG_WARN("MQTT not connected, skipping measurement publish");
+		return;
+	}
 	/* Print it to a string for easy human reading - payload format is highly
 	 * application dependent. */
 	snprintf(payload, sizeof(payload), "%s", json);

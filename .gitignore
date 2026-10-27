@@ -7,3 +7,6 @@ src/test_crypto
 target
 Cargo.lock
 /powertag2influx
+data/
+.venv/
+__pycache__/

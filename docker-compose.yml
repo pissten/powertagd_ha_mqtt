@@ -3,6 +3,11 @@ services:
     build: .
     container_name: powertagd
     restart: unless-stopped
+    ports:
+      - "8092:8092"
+    volumes:
+      # Names, publish settings and last readings survive image rebuilds
+      - /opt/powertagd:/data
     devices:
       #- /dev/ttyACM0:/dev/ttyACM0
       # Recommended: Use by-id for stability
@@ -13,6 +18,8 @@ services:
       - MQTT_USER=mqtt
       - MQTT_PASSWORD=mqtt
       - SERIAL_DEV=/dev/ttyACM0
+      - DATA_DIR=/data
+      - WEB_PORT=8092
       # Optional: Extra args for powertagd debugging logs
       #- EXTRA_ARGS=-v
     # network_mode: host # Uncomment if needed for mDNS or ease of access

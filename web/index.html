@@ -1,0 +1,317 @@
+<!DOCTYPE html>
+<html lang="nb">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PowerTag</title>
+<style>
+  :root {
+    --bg: #10140f;
+    --panel: #1a2118;
+    --panel-2: #232b20;
+    --line: #31402c;
+    --text: #e7f0df;
+    --muted: #9aab90;
+    --amber: #e6b15a;
+    --amber-2: #f3d7a1;
+    --good: #8fce6a;
+    --bad: #e07a62;
+    --shadow: 0 16px 40px rgba(0, 0, 0, 0.28);
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    min-height: 100vh;
+    background:
+      radial-gradient(900px 420px at 8% -10%, rgba(230, 177, 90, 0.16), transparent 55%),
+      var(--bg);
+    color: var(--text);
+    font: 16px/1.45 "Avenir Next", "Segoe UI", sans-serif;
+  }
+  header.top {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 16px 24px;
+    align-items: flex-end;
+    justify-content: space-between;
+    padding: 28px 28px 8px;
+  }
+  h1 {
+    margin: 0;
+    font-size: 32px;
+    letter-spacing: -0.04em;
+    font-weight: 650;
+  }
+  .lede { margin: 4px 0 0; color: var(--muted); }
+  .actions, .status-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  button, .ghost {
+    border: 1px solid var(--line);
+    background: var(--panel-2);
+    color: var(--text);
+    border-radius: 999px;
+    padding: 10px 16px;
+    font: inherit;
+    cursor: pointer;
+  }
+  button.primary { background: var(--amber); color: #231a0c; border-color: transparent; font-weight: 650; }
+  button:hover { filter: brightness(1.06); }
+  button:disabled { opacity: 0.5; cursor: wait; }
+  main { padding: 12px 28px 48px; }
+  .banner {
+    margin: 12px 0 18px;
+    padding: 12px 14px;
+    border-radius: 14px;
+    background: rgba(224, 122, 98, 0.12);
+    color: #ffd2c6;
+    border: 1px solid rgba(224, 122, 98, 0.35);
+  }
+  .banner.ok { display: none; }
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+    gap: 16px;
+  }
+  article.card {
+    background: linear-gradient(180deg, rgba(255,255,255,0.02), transparent 80px), var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 22px;
+    padding: 18px;
+    box-shadow: var(--shadow);
+  }
+  .card h2 { margin: 0; font-size: 22px; letter-spacing: -0.03em; }
+  .meta, .seen { color: var(--muted); font-size: 13px; margin-top: 4px; }
+  .seen.stale { color: var(--bad); }
+  .metrics {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+    margin: 16px 0 8px;
+  }
+  .metric {
+    background: var(--panel-2);
+    border-radius: 16px;
+    padding: 12px;
+  }
+  .metric span { display: block; color: var(--muted); font-size: 12px; letter-spacing: 0.04em; text-transform: uppercase; }
+  .metric strong { font-size: 26px; letter-spacing: -0.04em; }
+  .bar {
+    height: 8px;
+    border-radius: 99px;
+    background: #10140f;
+    overflow: hidden;
+    margin-top: 8px;
+  }
+  .bar i { display: block; height: 100%; width: 0; background: var(--good); }
+  .bar.weak i { background: var(--bad); }
+  .bar.mid i { background: var(--amber); }
+  h3 { margin: 18px 0 8px; font-size: 14px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--amber-2); }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  th, td { text-align: left; padding: 7px 4px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--muted); font-weight: 550; }
+  code { font-family: "SFMono-Regular", ui-monospace, monospace; font-size: 12px; color: var(--amber-2); }
+  form.mqtt { display: grid; gap: 10px; margin-top: 8px; }
+  label { display: grid; gap: 6px; font-size: 14px; color: var(--muted); }
+  input[type="text"] {
+    width: 100%;
+    border-radius: 12px;
+    border: 1px solid var(--line);
+    background: #10140f;
+    color: var(--text);
+    padding: 10px 12px;
+    font: inherit;
+  }
+  .choices { display: flex; flex-direction: column; gap: 6px; color: var(--text); }
+  .choices label { display: flex; gap: 8px; align-items: flex-start; }
+  .empty {
+    padding: 28px;
+    border: 1px dashed var(--line);
+    border-radius: 22px;
+    color: var(--muted);
+  }
+  .scan { margin: 8px 0 18px; color: var(--muted); }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+  .chip { background: var(--panel-2); border-radius: 999px; padding: 4px 10px; font-size: 13px; }
+  .toast { min-height: 1.2em; color: var(--amber-2); font-size: 14px; }
+</style>
+</head>
+<body>
+<header class="top">
+  <div>
+    <h1>PowerTag</h1>
+    <p class="lede" id="lede">Oversikt over enheter på dongelen</p>
+  </div>
+  <div>
+    <div class="status-row">
+      <span class="ghost" id="mqtt">MQTT …</span>
+      <span class="toast" id="toast" role="status"></span>
+    </div>
+    <div class="actions" style="margin-top:8px">
+      <button type="button" id="scan">Søk kanal</button>
+      <button type="button" class="primary" id="pair">Start paring</button>
+      <button type="button" id="rediscover">Oppdater Home Assistant</button>
+    </div>
+  </div>
+</header>
+<main>
+  <div id="banner" class="banner ok"></div>
+  <section class="scan" id="scanbox" hidden>
+    <strong>Kanalsøk</strong>
+    <div class="chips" id="scanchips"></div>
+  </section>
+  <section class="grid" id="grid"></section>
+</main>
+<script>
+const LABELS_ORDER = ["voltage_p1", "current_p1", "total_power_active", "total_energy_import"];
+
+function ageText(ts) {
+  if (!ts) return { text: "Ingen ny måling siden oppstart", stale: true };
+  const sec = Math.max(0, Date.now() / 1000 - ts);
+  const when = new Date(ts * 1000).toLocaleString("nb-NO", { hour: "2-digit", minute: "2-digit", day: "2-digit", month: "2-digit" });
+  if (sec < 120) return { text: "Sist sett " + when, stale: false };
+  if (sec < 3600) return { text: "Sist sett " + when + " (" + Math.round(sec / 60) + " min siden)", stale: sec > 600 };
+  return { text: "Sist sett " + when, stale: true };
+}
+
+function esc(value) {
+  return String(value ?? "").replace(/[&<>"']/g, (ch) => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+  }[ch]));
+}
+
+function topicHtml(topic) {
+  return esc(topic).split("/").join("/<wbr>");
+}
+
+function shownValue(entity) {
+  if (entity.value == null || entity.value === "") return "–";
+  const unit = !entity.unit || entity.unit === "lqi" ? "" : " " + entity.unit;
+  return esc(entity.value) + unit;
+}
+
+function metricTiles(device) {
+  const by = Object.fromEntries(device.entities.map(e => [e.metric, e]));
+  return LABELS_ORDER.map(key => {
+    const e = by[key] || { label: key, value: null, unit: "" };
+    return `<div class="metric"><span>${esc(e.label)}</span><strong>${shownValue(e)}</strong></div>`;
+  }).join("");
+}
+
+function signal(device) {
+  const lqi = Number(device.values.lqi);
+  if (!Number.isFinite(lqi)) return "";
+  const pct = Math.max(0, Math.min(100, (lqi / 255) * 100));
+  const cls = lqi < 40 ? "weak" : lqi < 80 ? "mid" : "";
+  return `<div class="bar ${cls}" title="Signal ${lqi}"><i style="width:${pct}%"></i></div><div class="seen">Signal ${lqi} av 255</div>`;
+}
+
+function card(device) {
+  const age = ageText(device.last_seen);
+  const title = device.name || ("PowerTag " + device.id);
+  const bits = [device.model, device.serial, device.fw_ver].filter(v => v && v !== "Unknown");
+  const rows = device.entities.map(e => `<tr><td>${esc(e.label)}</td><td>${shownValue(e)}</td><td><code>${topicHtml(e.topic)}</code></td></tr>`).join("");
+  const idMode = device.publish_as !== "name";
+  return `<article class="card" data-id="${esc(device.id)}">
+    <h2>${esc(title)}</h2>
+    <div class="meta">${esc(device.id)}${bits.length ? " · " + bits.map(esc).join(" · ") : ""}</div>
+    <div class="seen ${age.stale ? "stale" : ""}">${esc(age.text)}</div>
+    <div class="metrics">${metricTiles(device)}</div>
+    ${signal(device)}
+    <h3>Entiteter</h3>
+    <table><thead><tr><th>Måling</th><th>Verdi</th><th>MQTT-emne</th></tr></thead><tbody>${rows}</tbody></table>
+    <h3>MQTT</h3>
+    <form class="mqtt" data-id="${esc(device.id)}">
+      <label>Navn i Home Assistant
+        <input type="text" name="name" maxlength="64" value="${esc(device.name || "")}" placeholder="For eksempel Hovedtavle">
+      </label>
+      <div class="choices">
+        <label><input type="radio" name="publish_as" value="id" ${idMode ? "checked" : ""}> Publiser med enhets-id <code>powertag/${esc(device.id)}/…</code></label>
+        <label><input type="radio" name="publish_as" value="name" ${idMode ? "" : "checked"}> Publiser med valgt navn <code>powertag/${esc(device.slug)}/…</code></label>
+      </div>
+      <button type="submit">Lagre</button>
+    </form>
+  </article>`;
+}
+
+async function api(path, options) {
+  const res = await fetch(path, options);
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || "Forespørselen feilet");
+  return data;
+}
+
+function toast(text) {
+  const el = document.getElementById("toast");
+  el.textContent = text;
+  clearTimeout(toast._t);
+  toast._t = setTimeout(() => { el.textContent = ""; }, 5000);
+}
+
+async function refresh() {
+  const typing = document.activeElement && document.activeElement.closest("form.mqtt");
+  if (typing) return;
+  const data = await api("/api/devices");
+  document.getElementById("lede").textContent = data.devices.length
+    ? data.devices.length + " enhet" + (data.devices.length === 1 ? "" : "er") + " kjent"
+    : "Ingen enheter sett ennå";
+  const mqtt = document.getElementById("mqtt");
+  mqtt.textContent = data.mqtt_connected ? "MQTT tilkoblet" : "MQTT frakoblet";
+  const banner = document.getElementById("banner");
+  if (data.mqtt_connected) {
+    banner.className = "banner ok";
+    banner.textContent = "";
+  } else {
+    banner.className = "banner";
+    banner.textContent = "MQTT-brokeren svarer ikke. Siden står oppe, og tilkoblingen prøves på nytt av seg selv.";
+  }
+  const grid = document.getElementById("grid");
+  if (!data.devices.length) {
+    grid.innerHTML = '<div class="empty">Ingen PowerTag er sett ennå. Trykk Start paring, og sett taggen i paringsmodus.</div>';
+  } else {
+    grid.innerHTML = data.devices.map(card).join("");
+  }
+  const scan = data.scan || [];
+  const box = document.getElementById("scanbox");
+  box.hidden = scan.length === 0;
+  document.getElementById("scanchips").innerHTML = scan.map(s => `<span class="chip">kanal ${s.channel}: ${s.rssi} dBm</span>`).join("");
+}
+
+document.getElementById("grid").addEventListener("submit", async (ev) => {
+  const form = ev.target.closest("form.mqtt");
+  if (!form) return;
+  ev.preventDefault();
+  const body = {
+    name: form.elements.name.value.trim(),
+    publish_as: new FormData(form).get("publish_as")
+  };
+  try {
+    await api("/api/devices/" + form.dataset.id, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body)
+    });
+    toast("Lagret for " + form.dataset.id);
+    await refresh();
+  } catch (err) {
+    toast(err.message);
+  }
+});
+
+async function command(path, label) {
+  try {
+    const data = await api(path, { method: "POST" });
+    toast(data.message || label);
+    await refresh();
+  } catch (err) {
+    toast(err.message);
+  }
+}
+
+document.getElementById("scan").onclick = () => command("/api/scan", "Kanalsøk startet");
+document.getElementById("pair").onclick = () => command("/api/pair", "Paring startet");
+document.getElementById("rediscover").onclick = () => command("/api/discovery", "Home Assistant oppdatert");
+
+refresh().catch(err => toast(err.message));
+setInterval(() => refresh().catch(() => {}), 2000);
+</script>
+</body>
+</html>
