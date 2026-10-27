@@ -67,6 +67,8 @@ static struct {
 static struct mosquitto *mosq;
 static volatile bool mosq_connected = false;
 static volatile enum { CMD_NONE, CMD_SCAN, CMD_PAIR } pending_cmd = CMD_NONE;
+static volatile uint32_t pending_identify_id = 0;
+static volatile bool pending_identify = false;
 
 static void on_message(struct mosquitto *mosq, void *obj, const struct mosquitto_message *msg)
 {
@@ -80,6 +82,25 @@ static void on_message(struct mosquitto *mosq, void *obj, const struct mosquitto
 	} else if (strcmp(msg->topic, "powertag/cmd/pair") == 0) {
 		LOG_INFO("Scheduling Pairing Mode...");
 		pending_cmd = CMD_PAIR;
+	} else if (strcmp(msg->topic, "powertag/cmd/identify") == 0) {
+		char buf[16];
+		char *end = NULL;
+		unsigned long id;
+
+		if (msg->payloadlen >= sizeof(buf)) {
+			LOG_ERR("identify: invalid device id");
+			return;
+		}
+		memcpy(buf, msg->payload, msg->payloadlen);
+		buf[msg->payloadlen] = '\0';
+		id = strtoul(buf, &end, 16);
+		if (end == buf || id > 0xffffffffUL) {
+			LOG_ERR("identify: invalid device id");
+			return;
+		}
+		pending_identify_id = (uint32_t)id;
+		pending_identify = true;
+		LOG_INFO("Scheduling identify for 0x%08x", pending_identify_id);
 	}
 }
 
@@ -806,6 +827,9 @@ static bool gp_callback_handler(const GpFrame *f)
 	case GPF_CMD_MANUFACTURER_MULTI_CLUSTER_REPORTING:
 		gpf_process_mfr_multi_cluster_reporting(f);
 		break;
+	case GPF_CMD_WRITE_ATTRIBUTES_ACK:
+		LOG_INFO("PowerTag 0x%08x acknowledged identify and should blink", gpf_source_id(f));
+		break;
 	default:
 		return false;
 	}
@@ -1039,6 +1063,14 @@ int main(int argc, char **argv)
             pending_cmd = CMD_NONE;
             gp_set_allow_commissioning(true);
         }
+
+		if (pending_identify) {
+			uint32_t id = pending_identify_id;
+			pending_identify = false;
+			LOG_INFO("Sending identify to PowerTag 0x%08x", id);
+			if (!powertag_queue_identify(id))
+				LOG_ERR("Could not queue identify for PowerTag 0x%08x", id);
+		}
 
 		ezsp_read_callbacks(200); 
 	}

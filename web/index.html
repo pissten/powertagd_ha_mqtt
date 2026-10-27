@@ -54,6 +54,8 @@
     cursor: pointer;
   }
   button.primary { background: var(--amber); color: #231a0c; border-color: transparent; font-weight: 650; }
+  .cardhead { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
+  button.blink { flex: none; }
   button:hover { filter: brightness(1.06); }
   button:disabled { opacity: 0.5; cursor: wait; }
   main { padding: 12px 28px 48px; }
@@ -211,7 +213,10 @@ function card(device) {
   const rows = device.entities.map(e => `<tr><td>${esc(e.label)}</td><td>${shownValue(e)}</td><td><code>${topicHtml(e.topic)}</code></td></tr>`).join("");
   const idMode = device.publish_as !== "name";
   return `<article class="card" data-id="${esc(device.id)}">
-    <h2>${esc(title)}</h2>
+    <div class="cardhead">
+      <h2>${esc(title)}</h2>
+      <button type="button" class="blink" data-id="${esc(device.id)}">Blink</button>
+    </div>
     <div class="meta">${esc(device.id)}${bits.length ? " · " + bits.map(esc).join(" · ") : ""}</div>
     <div class="seen ${age.stale ? "stale" : ""}">${esc(age.text)}</div>
     <div class="metrics">${metricTiles(device)}</div>
@@ -274,6 +279,20 @@ async function refresh() {
   box.hidden = scan.length === 0;
   document.getElementById("scanchips").innerHTML = scan.map(s => `<span class="chip">kanal ${s.channel}: ${s.rssi} dBm</span>`).join("");
 }
+
+document.getElementById("grid").addEventListener("click", async (ev) => {
+  const btn = ev.target.closest("button.blink");
+  if (!btn) return;
+  btn.disabled = true;
+  try {
+    const data = await api("/api/devices/" + btn.dataset.id + "/identify", { method: "POST" });
+    toast(data.message || "Blink sendt");
+  } catch (err) {
+    toast(err.message);
+  } finally {
+    btn.disabled = false;
+  }
+});
 
 document.getElementById("grid").addEventListener("submit", async (ev) => {
   const form = ev.target.closest("form.mqtt");

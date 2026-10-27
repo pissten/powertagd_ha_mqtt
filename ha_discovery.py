@@ -487,10 +487,10 @@ def on_message(client, userdata, msg):
         print(f"Error processing message: {e}", file=sys.stderr)
 
 
-def send_command(topic):
+def send_command(topic, payload="true"):
     if mqtt_client is None or not mqtt_connected:
         return False, "MQTT er ikke tilkoblet ennå"
-    mqtt_client.publish(topic, "true", qos=1, retain=False)
+    mqtt_client.publish(topic, payload, qos=1, retain=False)
     return True, "Kommando sendt"
 
 
@@ -560,6 +560,17 @@ class WebHandler(BaseHTTPRequestHandler):
             if path == "/api/pair":
                 ok, message = send_command("powertag/cmd/pair")
                 text = "Paring startet. Sett PowerTag i paringsmodus nå." if ok else message
+                self._json(200 if ok else 503, {"ok": ok, "message": text, "error": None if ok else message})
+                return
+            identify_prefix = "/api/devices/"
+            identify_suffix = "/identify"
+            if path.startswith(identify_prefix) and path.endswith(identify_suffix):
+                device_id = path[len(identify_prefix):-len(identify_suffix)].lower()
+                if not is_device_id(device_id):
+                    self._json(400, {"error": "Ukjent enhets-id"})
+                    return
+                ok, message = send_command("powertag/cmd/identify", device_id)
+                text = "Blink er sendt. Lampen blinker i ca. 10 sekunder når taggen svarer." if ok else message
                 self._json(200 if ok else 503, {"ok": ok, "message": text, "error": None if ok else message})
                 return
             if path == "/api/discovery":

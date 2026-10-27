@@ -1,6 +1,7 @@
 #include <unistd.h>
 
 #include "powertag.h"
+#include "zcl.h"
 #include "log.h"
 
 bool xncp_init(void)
@@ -63,6 +64,42 @@ bool xncp_set_gp_key(EmberKey *key)
 	}
 
 	LOG_DBG("powertagd: GP key set to 0x%s", key2str(key->data));
+	return true;
+}
+
+/*
+ * Ask one PowerTag to blink its LED for 10 seconds.
+ * The dongle sends the frame the next time that tag transmits.
+ */
+bool powertag_queue_identify(GpSrcId devid)
+{
+	static uint8_t identify_frame[10] = {
+		GPF_CMD_WRITE_ATTRIBUTES, 0x00 /* Options field */,
+		ZCL_CLUSTER_IDENTIFY & 0xff, ZCL_CLUSTER_IDENTIFY >> 8, /* Cluster ID */
+		5,          /* Record length */
+		0x00, 0x00, /* Attribute ID (ZCL_IDENTIFY_TIME) */
+		ZCL_ATTR_TYPE_U16, /* Data type */
+		0x0a, 0x00, /* 10s identify time (uint16) */
+	};
+
+	uint8_t cmd[1+5+sizeof(identify_frame)];
+	cmd[0] = XNCP_CMD_PUSH_TX_QUEUE;
+	cmd[1] = GP_APP_SOURCE_ID;
+	u32_to_mem(devid, cmd+2);
+	memcpy(cmd+6, identify_frame, sizeof(identify_frame));
+
+	LOG_DBG("0x%08x: queuing identify cmd", devid);
+	ezsp_send_xncp_frame(cmd, sizeof(cmd));
+
+	EzspXncpReply reply;
+	if (!ezsp_read_xncp_reply(&reply))
+		return false;
+	if (reply.es != EMBER_SUCCESS) {
+		LOG_ERR("0x%08x: failed queuing identify cmd", devid);
+		return false;
+	}
+
+	LOG_DBG("0x%08x: queued identify cmd", devid);
 	return true;
 }
 
