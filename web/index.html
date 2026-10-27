@@ -68,10 +68,50 @@
     border: 1px solid rgba(224, 122, 98, 0.35);
   }
   .banner.ok { display: none; }
+  .viewswitch { display: inline-flex; padding: 3px; border: 1px solid var(--line); border-radius: 999px; background: #10140f; }
+  .viewswitch button { border: 0; background: transparent; }
+  .viewswitch button[aria-pressed="true"] { background: var(--amber); color: #231a0c; font-weight: 650; }
   .grid {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
     gap: 16px;
+  }
+  .list { display: flex; flex-direction: column; gap: 8px; }
+  .listhead, article.row {
+    display: grid;
+    grid-template-columns: minmax(190px, 1.7fr) repeat(4, minmax(78px, .8fr)) minmax(110px, .9fr) auto;
+    gap: 8px 14px;
+    align-items: center;
+  }
+  .listhead {
+    padding: 4px 13px;
+    border: 1px solid transparent;
+    color: var(--muted);
+    font-size: 12px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+  article.row {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 16px;
+    padding: 10px 12px;
+  }
+  button.rowmain {
+    text-align: left;
+    background: transparent;
+    border: 0;
+    border-radius: 12px;
+    padding: 4px 2px;
+  }
+  button.rowmain strong { display: block; font-size: 16px; }
+  .cell { font-variant-numeric: tabular-nums; }
+  .signalcell .bar { margin-top: 4px; }
+  .rowdetail { grid-column: 1 / -1; padding-top: 8px; border-top: 1px solid var(--line); }
+  @media (max-width: 980px) {
+    .listhead { display: none; }
+    .listhead, article.row { grid-template-columns: 1fr 1fr auto; }
+    button.rowmain, .rowdetail { grid-column: 1 / -1; }
   }
   article.card {
     background: linear-gradient(180deg, rgba(255,255,255,0.02), transparent 80px), var(--panel);
@@ -148,6 +188,10 @@
       <span class="toast" id="toast" role="status"></span>
     </div>
     <div class="actions" style="margin-top:8px">
+      <div class="viewswitch" role="group" aria-label="Visning">
+        <button type="button" id="view-list" aria-pressed="true">Liste</button>
+        <button type="button" id="view-cards" aria-pressed="false">Kort</button>
+      </div>
       <button type="button" id="scan">Søk kanal</button>
       <button type="button" class="primary" id="pair">Start paring</button>
       <button type="button" id="rediscover">Oppdater Home Assistant</button>
@@ -198,30 +242,41 @@ function metricTiles(device) {
   }).join("");
 }
 
-function signal(device) {
+function signalBits(device) {
   const lqi = Number(device.values.lqi);
-  if (!Number.isFinite(lqi)) return "";
+  if (!Number.isFinite(lqi)) return null;
   const pct = Math.max(0, Math.min(100, (lqi / 255) * 100));
   const cls = lqi < 40 ? "weak" : lqi < 80 ? "mid" : "";
-  return `<div class="bar ${cls}" title="Signal ${lqi}"><i style="width:${pct}%"></i></div><div class="seen">Signal ${lqi} av 255</div>`;
+  return { lqi, pct, cls };
 }
 
-function card(device) {
-  const age = ageText(device.last_seen);
-  const title = device.name || ("PowerTag " + device.id);
-  const bits = [device.model, device.serial, device.fw_ver].filter(v => v && v !== "Unknown");
-  const rows = device.entities.map(e => `<tr><td>${esc(e.label)}</td><td>${shownValue(e)}</td><td><code>${topicHtml(e.topic)}</code></td></tr>`).join("");
-  const idMode = device.publish_as !== "name";
-  return `<article class="card" data-id="${esc(device.id)}">
-    <div class="cardhead">
-      <h2>${esc(title)}</h2>
-      <button type="button" class="blink" data-id="${esc(device.id)}">Blink</button>
-    </div>
-    <div class="meta">${esc(device.id)}${bits.length ? " · " + bits.map(esc).join(" · ") : ""}</div>
-    <div class="seen ${age.stale ? "stale" : ""}">${esc(age.text)}</div>
-    <div class="metrics">${metricTiles(device)}</div>
-    ${signal(device)}
-    <h3>Entiteter</h3>
+function signal(device) {
+  const bits = signalBits(device);
+  if (!bits) return "";
+  return `<div class="bar ${bits.cls}" title="Signal ${bits.lqi}"><i style="width:${bits.pct}%"></i></div><div class="seen">Signal ${bits.lqi} av 255</div>`;
+}
+
+function metricText(device, key) {
+  const entity = device.entities.find(item => item.metric === key);
+  return entity ? shownValue(entity) : "–";
+}
+
+let view = localStorage.getItem("powertag-view") === "cards" ? "cards" : "list";
+let openId = null;
+
+function deviceBits(device) {
+  return {
+    age: ageText(device.last_seen),
+    title: device.name || ("PowerTag " + device.id),
+    bits: [device.model, device.serial, device.fw_ver].filter(value => value && value !== "Unknown"),
+    idMode: device.publish_as !== "name"
+  };
+}
+
+function detail(device) {
+  const info = deviceBits(device);
+  const rows = device.entities.map(entity => `<tr><td>${esc(entity.label)}</td><td>${shownValue(entity)}</td><td><code>${topicHtml(entity.topic)}</code></td></tr>`).join("");
+  return `<h3>Entiteter</h3>
     <table><thead><tr><th>Måling</th><th>Verdi</th><th>MQTT-emne</th></tr></thead><tbody>${rows}</tbody></table>
     <h3>MQTT</h3>
     <form class="mqtt" data-id="${esc(device.id)}">
@@ -229,12 +284,58 @@ function card(device) {
         <input type="text" name="name" maxlength="64" value="${esc(device.name || "")}" placeholder="For eksempel Hovedtavle">
       </label>
       <div class="choices">
-        <label><input type="radio" name="publish_as" value="id" ${idMode ? "checked" : ""}> Publiser med enhets-id <code>powertag/${esc(device.id)}/…</code></label>
-        <label><input type="radio" name="publish_as" value="name" ${idMode ? "" : "checked"}> Publiser med valgt navn <code>powertag/${esc(device.slug)}/…</code></label>
+        <label><input type="radio" name="publish_as" value="id" ${info.idMode ? "checked" : ""}> Publiser med enhets-id <code>powertag/${esc(device.id)}/…</code></label>
+        <label><input type="radio" name="publish_as" value="name" ${info.idMode ? "" : "checked"}> Publiser med valgt navn <code>powertag/${esc(device.slug)}/…</code></label>
       </div>
       <button type="submit">Lagre</button>
-    </form>
+    </form>`;
+}
+
+function listView(devices) {
+  const head = `<div class="listhead"><span>Enhet</span><span>Spenning</span><span>Strøm</span><span>Effekt</span><span>Energi inn</span><span>Signal</span><span></span></div>`;
+  const rows = devices.map(device => {
+    const info = deviceBits(device);
+    const bits = signalBits(device);
+    const signalCell = bits
+      ? `<div class="cell signalcell">${bits.lqi}<div class="bar ${bits.cls}"><i style="width:${bits.pct}%"></i></div></div>`
+      : `<div class="cell">–</div>`;
+    const open = openId === device.id;
+    return `<article class="row${open ? " open" : ""}">
+      <button type="button" class="rowmain" data-expand="${esc(device.id)}">
+        <strong>${esc(info.title)}</strong>
+        <span class="meta">${esc(device.id)}${info.bits.length ? " · " + info.bits.map(esc).join(" · ") : ""}</span>
+        <span class="seen ${info.age.stale ? "stale" : ""}">${esc(info.age.text)}</span>
+      </button>
+      <div class="cell">${metricText(device, "voltage_p1")}</div>
+      <div class="cell">${metricText(device, "current_p1")}</div>
+      <div class="cell">${metricText(device, "total_power_active")}</div>
+      <div class="cell">${metricText(device, "total_energy_import")}</div>
+      ${signalCell}
+      <button type="button" class="blink" data-id="${esc(device.id)}">Blink</button>
+      ${open ? `<div class="rowdetail">${detail(device)}</div>` : ""}
+    </article>`;
+  }).join("");
+  return head + rows;
+}
+
+function card(device) {
+  const info = deviceBits(device);
+  return `<article class="card" data-id="${esc(device.id)}">
+    <div class="cardhead">
+      <h2>${esc(info.title)}</h2>
+      <button type="button" class="blink" data-id="${esc(device.id)}">Blink</button>
+    </div>
+    <div class="meta">${esc(device.id)}${info.bits.length ? " · " + info.bits.map(esc).join(" · ") : ""}</div>
+    <div class="seen ${info.age.stale ? "stale" : ""}">${esc(info.age.text)}</div>
+    <div class="metrics">${metricTiles(device)}</div>
+    ${signal(device)}
+    ${detail(device)}
   </article>`;
+}
+
+function paintView() {
+  document.getElementById("view-list").setAttribute("aria-pressed", view === "list" ? "true" : "false");
+  document.getElementById("view-cards").setAttribute("aria-pressed", view === "cards" ? "true" : "false");
 }
 
 async function api(path, options) {
@@ -269,9 +370,15 @@ async function refresh() {
     banner.textContent = "MQTT-brokeren svarer ikke. Siden står oppe, og tilkoblingen prøves på nytt av seg selv.";
   }
   const grid = document.getElementById("grid");
+  paintView();
   if (!data.devices.length) {
+    grid.className = "grid";
     grid.innerHTML = '<div class="empty">Ingen PowerTag er sett ennå. Trykk Start paring, og sett taggen i paringsmodus.</div>';
+  } else if (view === "list") {
+    grid.className = "list";
+    grid.innerHTML = listView(data.devices);
   } else {
+    grid.className = "grid";
     grid.innerHTML = data.devices.map(card).join("");
   }
   const scan = data.scan || [];
@@ -280,7 +387,24 @@ async function refresh() {
   document.getElementById("scanchips").innerHTML = scan.map(s => `<span class="chip">kanal ${s.channel}: ${s.rssi} dBm</span>`).join("");
 }
 
+document.getElementById("view-list").onclick = () => {
+  view = "list";
+  localStorage.setItem("powertag-view", view);
+  refresh();
+};
+document.getElementById("view-cards").onclick = () => {
+  view = "cards";
+  localStorage.setItem("powertag-view", view);
+  refresh();
+};
+
 document.getElementById("grid").addEventListener("click", async (ev) => {
+  const expander = ev.target.closest("[data-expand]");
+  if (expander) {
+    openId = openId === expander.dataset.expand ? null : expander.dataset.expand;
+    refresh();
+    return;
+  }
   const btn = ev.target.closest("button.blink");
   if (!btn) return;
   btn.disabled = true;
