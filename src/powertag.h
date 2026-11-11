@@ -42,6 +42,7 @@ bool xncp_get_gp_key(EmberKey *gp_key);
 bool xncp_set_gp_key(EmberKey *key);
 
 bool powertag_net_init(GpCallbackHandler gp_cb);
-bool powertag_queue_identify(GpSrcId devid);
+bool powertag_queue_identify(GpSrcId devid, uint16_t seconds);
+bool powertag_clear_tx_queue(void);
 
 #endif

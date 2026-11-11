@@ -10,6 +10,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdio.h>
+#include <time.h>
 #include <unistd.h>
 #include <pthread.h>
 
@@ -69,6 +70,22 @@ static volatile bool mosq_connected = false;
 static volatile enum { CMD_NONE, CMD_SCAN, CMD_PAIR } pending_cmd = CMD_NONE;
 static volatile uint32_t pending_identify_id = 0;
 static volatile bool pending_identify = false;
+
+/*
+ * IdentifyTime is refreshed on every tag transmission while the write stays
+ * in the dongle queue, so the LED never reaches zero. Arm the write only
+ * long enough for one delivery, let it blink, then write zero and drop that too.
+ */
+static uint32_t identify_id = 0;
+static volatile unsigned identify_ack_gen = 0;
+static unsigned identify_ack_mark = 0;
+static time_t identify_deadline = 0;
+static enum {
+	IDENT_IDLE = 0,
+	IDENT_ARMED,
+	IDENT_BLINKING,
+	IDENT_STOPPING,
+} identify_phase = IDENT_IDLE;
 
 static void on_message(struct mosquitto *mosq, void *obj, const struct mosquitto_message *msg)
 {
@@ -829,6 +846,8 @@ static bool gp_callback_handler(const GpFrame *f)
 		break;
 	case GPF_CMD_WRITE_ATTRIBUTES_ACK:
 		LOG_INFO("PowerTag 0x%08x acknowledged identify and should blink", gpf_source_id(f));
+		if (gpf_source_id(f) == identify_id)
+			identify_ack_gen++;
 		break;
 	default:
 		return false;
@@ -1044,6 +1063,8 @@ int main(int argc, char **argv)
 		return 1;
 	if (!powertag_net_init(gp_callback_handler))
 		return 1;
+	if (!powertag_clear_tx_queue())
+		LOG_ERR("Could not clear leftover Zigbee TX queue");
 
 #ifdef ENABLE_MQTT
 	if (output_type == OUTPUT_MQTT) {
@@ -1067,9 +1088,45 @@ int main(int argc, char **argv)
 		if (pending_identify) {
 			uint32_t id = pending_identify_id;
 			pending_identify = false;
+			identify_id = id;
 			LOG_INFO("Sending identify to PowerTag 0x%08x", id);
-			if (!powertag_queue_identify(id))
+			powertag_clear_tx_queue();
+			if (!powertag_queue_identify(id, 10)) {
 				LOG_ERR("Could not queue identify for PowerTag 0x%08x", id);
+				identify_phase = IDENT_IDLE;
+			} else {
+				identify_phase = IDENT_ARMED;
+				identify_ack_mark = identify_ack_gen;
+				identify_deadline = time(NULL) + 8;
+			}
+		}
+
+		if (identify_phase == IDENT_ARMED &&
+		    (identify_ack_gen != identify_ack_mark || time(NULL) >= identify_deadline)) {
+			powertag_clear_tx_queue();
+			identify_phase = IDENT_BLINKING;
+			identify_ack_mark = identify_ack_gen;
+			identify_deadline = time(NULL) + 10;
+			LOG_INFO("PowerTag 0x%08x blinks for 10s, then it is turned off", identify_id);
+		}
+
+		if (identify_phase == IDENT_BLINKING && time(NULL) >= identify_deadline) {
+			LOG_INFO("Stopping blink on PowerTag 0x%08x", identify_id);
+			if (!powertag_queue_identify(identify_id, 0)) {
+				LOG_ERR("Could not stop identify for PowerTag 0x%08x", identify_id);
+				identify_phase = IDENT_IDLE;
+			} else {
+				identify_phase = IDENT_STOPPING;
+				identify_ack_mark = identify_ack_gen;
+				identify_deadline = time(NULL) + 45;
+			}
+		}
+
+		if (identify_phase == IDENT_STOPPING &&
+		    (identify_ack_gen != identify_ack_mark || time(NULL) >= identify_deadline)) {
+			powertag_clear_tx_queue();
+			identify_phase = IDENT_IDLE;
+			LOG_INFO("PowerTag 0x%08x blink stopped", identify_id);
 		}
 
 		ezsp_read_callbacks(200); 

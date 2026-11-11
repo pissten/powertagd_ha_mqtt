@@ -68,18 +68,20 @@ bool xncp_set_gp_key(EmberKey *key)
 }
 
 /*
- * Ask one PowerTag to blink its LED for 10 seconds.
- * The dongle sends the frame the next time that tag transmits.
+ * Ask one PowerTag to blink its LED for the given number of seconds.
+ * seconds=0 turns the LED off. The dongle sends the frame the next time
+ * that tag transmits. The frame stays queued until powertag_clear_tx_queue(),
+ * and a stuck entry is sent again on every transmission.
  */
-bool powertag_queue_identify(GpSrcId devid)
+bool powertag_queue_identify(GpSrcId devid, uint16_t seconds)
 {
-	static uint8_t identify_frame[10] = {
+	uint8_t identify_frame[10] = {
 		GPF_CMD_WRITE_ATTRIBUTES, 0x00 /* Options field */,
 		ZCL_CLUSTER_IDENTIFY & 0xff, ZCL_CLUSTER_IDENTIFY >> 8, /* Cluster ID */
 		5,          /* Record length */
 		0x00, 0x00, /* Attribute ID (ZCL_IDENTIFY_TIME) */
 		ZCL_ATTR_TYPE_U16, /* Data type */
-		0x0a, 0x00, /* 10s identify time (uint16) */
+		seconds & 0xff, seconds >> 8,
 	};
 
 	uint8_t cmd[1+5+sizeof(identify_frame)];
@@ -100,6 +102,23 @@ bool powertag_queue_identify(GpSrcId devid)
 	}
 
 	LOG_DBG("0x%08x: queued identify cmd", devid);
+	return true;
+}
+
+/* Drop every frame waiting in the dongle TX queue. */
+bool powertag_clear_tx_queue(void)
+{
+	uint8_t cmd[1] = { XNCP_CMD_CLEAR_TX_QUEUE };
+
+	ezsp_send_xncp_frame(cmd, sizeof(cmd));
+
+	EzspXncpReply reply;
+	if (!ezsp_read_xncp_reply(&reply))
+		return false;
+	if (reply.es != EMBER_SUCCESS) {
+		LOG_ERR("failed clearing TX queue");
+		return false;
+	}
 	return true;
 }
 

@@ -401,15 +401,27 @@ int cmd_identify(int argc, char **argv)
 		errx(1, "identify: invalid device id");
 
 	powertag_dev = ntohl(u32_from_mem(buf));
-	if (!powertag_queue_identify(powertag_dev))
+	powertag_clear_tx_queue();
+	if (!powertag_queue_identify(powertag_dev, 10))
 		return 1;
 
 	if (!powertag_wait_reply(10000)) {
+		powertag_clear_tx_queue();
 		LOG_ERR("Could not find PowerTag 0x%02x. Is it on and commissioned?", powertag_dev);
 		return 1;
 	}
 
+	/* The queued write is retransmitted on every report and restarts the
+	 * 10s timer. Drop it once the tag has answered, then write 0. */
+	powertag_clear_tx_queue();
 	LOG_INFO("PowerTag 0x%02x is now blinking rapidly", powertag_dev);
+	sleep(10);
+	if (!powertag_queue_identify(powertag_dev, 0))
+		return 1;
+	if (!powertag_wait_reply(15000))
+		LOG_ERR("PowerTag 0x%02x did not confirm blink stop", powertag_dev);
+	powertag_clear_tx_queue();
+	LOG_INFO("PowerTag 0x%02x stopped blinking", powertag_dev);
 	return 0;
 }
 
