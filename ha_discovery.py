@@ -586,7 +586,7 @@ class WebHandler(BaseHTTPRequestHandler):
                     self._json(400, {"error": "Ukjent enhets-id"})
                     return
                 ok, message = send_command("powertag/cmd/identify", device_id)
-                text = "Blink er sendt. Lampen blinker i ca. 10 sekunder, og slås deretter av." if ok else message
+                text = "Rød blink er sendt. Den slås av etter ca. 10 sekunder, når taggen svarer igjen. Blink én tagg om gangen." if ok else message
                 self._json(200 if ok else 503, {"ok": ok, "message": text, "error": None if ok else message})
                 return
             if path == "/api/discovery":
