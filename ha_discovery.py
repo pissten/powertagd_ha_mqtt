@@ -231,6 +231,17 @@ def save_state(force=False):
         print(f"Could not write {STATE_PATH}: {exc}", file=sys.stderr)
 
 
+# Link quality older than this is a stored reading, not the link right now.
+LIVE_SIGNAL_SECONDS = 600
+
+
+def signal_is_live(last_seen):
+    if isinstance(last_seen, bool) or not isinstance(last_seen, (int, float)):
+        return False
+    age = time.time() - last_seen
+    return 0 <= age <= LIVE_SIGNAL_SECONDS
+
+
 def known_device_ids():
     found = set(state) | set(config["devices"])
     return sorted(device_id for device_id in found if is_device_id(device_id))
@@ -245,6 +256,8 @@ def device_view(device_id):
         for payload in clusters.values():
             if isinstance(payload, dict):
                 values.update(payload)
+    if not signal_is_live(item.get("last_seen")):
+        values.pop("lqi", None)
     meta = device_metadata.get(device_id, {})
     entities = []
     for metric, sensor in SENSOR_CONFIG.items():
@@ -347,6 +360,9 @@ def ensure_device_configured(client, device_id, force=False):
 
         if sensor.get("entity_category"):
             payload["entity_category"] = sensor["entity_category"]
+
+        if metric == "lqi":
+            payload["expire_after"] = LIVE_SIGNAL_SECONDS
 
         # Publish discovery config with Retain=True
         print(f"Publishing discovery for {metric}", flush=True)

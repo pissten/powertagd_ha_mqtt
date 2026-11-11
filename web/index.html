@@ -257,6 +257,7 @@ function metricTiles(device) {
 }
 
 function signalBits(device) {
+  if (ageText(device.last_seen).stale) return null;
   const lqi = Number(device.values.lqi);
   if (!Number.isFinite(lqi)) return null;
   const pct = Math.max(0, Math.min(100, (lqi / 255) * 100));
