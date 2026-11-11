@@ -256,7 +256,10 @@ def device_view(device_id):
         for payload in clusters.values():
             if isinstance(payload, dict):
                 values.update(payload)
-    if not signal_is_live(item.get("last_seen")):
+    last_seen = item.get("last_seen")
+    if signal_is_live(last_seen) and item.get("live_lqi") is not None:
+        values["lqi"] = item.get("live_lqi")
+    elif not signal_is_live(last_seen):
         values.pop("lqi", None)
     meta = device_metadata.get(device_id, {})
     entities = []
@@ -408,6 +411,8 @@ def remember_measurement(device_id, cluster, payload, retained):
         item.setdefault("clusters", {})[cluster] = payload
         if not retained:
             item["last_seen"] = time.time()
+            if "lqi" in payload:
+                item["live_lqi"] = payload["lqi"]
         save_state()
 
 
@@ -416,6 +421,22 @@ def clean_text(value):
     if len(text) >= 2 and text.startswith('"') and text.endswith('"'):
         text = text[1:-1]
     return text
+
+
+def schedule_blink_off(client):
+    """Ask every known tag to leave red identify. The dongle can deliver that
+    only on the tag's next transmission, so repeat once the daemon is up."""
+    def send():
+        if not mqtt_connected:
+            return
+        with lock:
+            ids = known_device_ids()
+        for device_id in ids:
+            client.publish("powertag/cmd/identify_off", device_id, qos=1, retain=False)
+            print(f"Queuing blink off for {device_id}", flush=True)
+
+    threading.Timer(8, send).start()
+    threading.Timer(25, send).start()
 
 
 def on_connect(client, userdata, flags, rc):
@@ -429,6 +450,7 @@ def on_connect(client, userdata, flags, rc):
     client.subscribe("powertag/#")
     print("Subscribed to powertag/#", flush=True)
     republish_known(client)
+    schedule_blink_off(client)
 
 
 def on_disconnect(client, userdata, rc):
@@ -586,7 +608,7 @@ class WebHandler(BaseHTTPRequestHandler):
                     self._json(400, {"error": "Ukjent enhets-id"})
                     return
                 ok, message = send_command("powertag/cmd/identify", device_id)
-                text = "Rød blink er sendt. Den slås av etter ca. 10 sekunder, når taggen svarer igjen. Blink én tagg om gangen." if ok else message
+                text = "Rød blink er sendt. Den slås av når taggen svarer igjen, og vanlig grønn og gul status kommer tilbake." if ok else message
                 self._json(200 if ok else 503, {"ok": ok, "message": text, "error": None if ok else message})
                 return
             if path == "/api/discovery":

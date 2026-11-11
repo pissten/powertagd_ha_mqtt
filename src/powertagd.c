@@ -69,22 +69,25 @@ static struct {
 static struct mosquitto *mosq;
 static volatile bool mosq_connected = false;
 static volatile enum { CMD_NONE, CMD_SCAN, CMD_PAIR } pending_cmd = CMD_NONE;
-static volatile uint32_t pending_identify_id = 0;
-static volatile bool pending_identify = false;
-
 /*
- * The dongle can hold one identify write. A new Blink used to replace that
- * write, so the previous tag was turned on and never received IdentifyTime 0.
- * Finish on, the 10s red blink, and off for one tag before the next starts.
- * The off write stays queued until the tag transmits or 3 minutes pass.
+ * The dongle can deliver a command only when the tag itself transmits.
+ * These tags are rarely heard, so a timer must not delete the off command:
+ * IdentifyTime 10 stays in the tag and the red LED never returns to normal.
+ * An off request stays queued until a frame from that tag is actually received.
  */
 #define IDENT_QUEUE_MAX 8
-static uint32_t identify_queue[IDENT_QUEUE_MAX];
+struct identify_req {
+	uint32_t id;
+	bool off_only;
+};
+static struct identify_req identify_queue[IDENT_QUEUE_MAX];
 static unsigned identify_queue_len = 0;
+static pthread_mutex_t identify_lock = PTHREAD_MUTEX_INITIALIZER;
 static uint32_t identify_id = 0;
 static volatile unsigned identify_seen = 0;
 static unsigned identify_seen_mark = 0;
 static time_t identify_deadline = 0;
+static time_t identify_log_at = 0;
 static enum {
 	IDENT_IDLE = 0,
 	IDENT_ON_QUEUED,
@@ -92,35 +95,44 @@ static enum {
 	IDENT_OFF_QUEUED,
 } identify_phase = IDENT_IDLE;
 
-static void identify_enqueue(uint32_t id)
+static void identify_enqueue(uint32_t id, bool off_only)
 {
 	unsigned i;
 
+	pthread_mutex_lock(&identify_lock);
 	for (i = 0; i < identify_queue_len; i++) {
-		if (identify_queue[i] != id)
+		if (identify_queue[i].id != id)
 			continue;
-		memmove(&identify_queue[i], &identify_queue[i + 1],
-		    (identify_queue_len - i - 1) * sizeof(id));
-		identify_queue_len--;
-		break;
+		if (off_only)
+			identify_queue[i].off_only = true;
+		pthread_mutex_unlock(&identify_lock);
+		return;
 	}
 	if (identify_queue_len >= IDENT_QUEUE_MAX) {
+		pthread_mutex_unlock(&identify_lock);
 		LOG_ERR("identify: too many queued blinks, dropping 0x%08x", id);
 		return;
 	}
-	identify_queue[identify_queue_len++] = id;
+	identify_queue[identify_queue_len].id = id;
+	identify_queue[identify_queue_len].off_only = off_only;
+	identify_queue_len++;
+	pthread_mutex_unlock(&identify_lock);
 	if (identify_phase != IDENT_IDLE)
-		LOG_INFO("PowerTag 0x%08x waits until 0x%08x has stopped blinking", id, identify_id);
+		LOG_INFO("PowerTag 0x%08x waits until 0x%08x is finished", id, identify_id);
 }
 
-static bool identify_dequeue(uint32_t *id)
+static bool identify_dequeue(struct identify_req *req)
 {
-	if (identify_queue_len == 0)
+	pthread_mutex_lock(&identify_lock);
+	if (identify_queue_len == 0) {
+		pthread_mutex_unlock(&identify_lock);
 		return false;
-	*id = identify_queue[0];
+	}
+	*req = identify_queue[0];
 	memmove(&identify_queue[0], &identify_queue[1],
-	    (identify_queue_len - 1) * sizeof(*id));
+	    (identify_queue_len - 1) * sizeof(*req));
 	identify_queue_len--;
+	pthread_mutex_unlock(&identify_lock);
 	return true;
 }
 
@@ -150,13 +162,13 @@ static void identify_queue_on(uint32_t id)
 		return;
 	}
 	identify_phase = IDENT_ON_QUEUED;
-	identify_deadline = time(NULL) + 12;
+	identify_log_at = time(NULL) + 30;
 	identify_mark_seen();
 }
 
 static void identify_queue_off(void)
 {
-	LOG_INFO("Sending blink off to PowerTag 0x%08x", identify_id);
+	LOG_INFO("Sending blink off to PowerTag 0x%08x; it stays queued until the tag transmits", identify_id);
 	powertag_clear_tx_queue();
 	if (!powertag_queue_identify(identify_id, 0)) {
 		LOG_ERR("Could not queue identify off for PowerTag 0x%08x", identify_id);
@@ -164,7 +176,7 @@ static void identify_queue_off(void)
 		return;
 	}
 	identify_phase = IDENT_OFF_QUEUED;
-	identify_deadline = time(NULL) + 180;
+	identify_log_at = time(NULL) + 30;
 	identify_mark_seen();
 }
 
@@ -196,9 +208,26 @@ static void on_message(struct mosquitto *mosq, void *obj, const struct mosquitto
 			LOG_ERR("identify: invalid device id");
 			return;
 		}
-		pending_identify_id = (uint32_t)id;
-		pending_identify = true;
-		LOG_INFO("Scheduling identify for 0x%08x", pending_identify_id);
+		identify_enqueue((uint32_t)id, false);
+		LOG_INFO("Scheduling identify for 0x%08x", (uint32_t)id);
+	} else if (strcmp(msg->topic, "powertag/cmd/identify_off") == 0) {
+		char buf[16];
+		char *end = NULL;
+		unsigned long id;
+
+		if (msg->payloadlen >= sizeof(buf)) {
+			LOG_ERR("identify off: invalid device id");
+			return;
+		}
+		memcpy(buf, msg->payload, msg->payloadlen);
+		buf[msg->payloadlen] = '\0';
+		id = strtoul(buf, &end, 16);
+		if (end == buf || id > 0xffffffffUL) {
+			LOG_ERR("identify off: invalid device id");
+			return;
+		}
+		identify_enqueue((uint32_t)id, true);
+		LOG_INFO("Scheduling blink off for 0x%08x", (uint32_t)id);
 	}
 }
 
@@ -1173,40 +1202,39 @@ int main(int argc, char **argv)
             gp_set_allow_commissioning(true);
         }
 
-		if (pending_identify) {
-			uint32_t id = pending_identify_id;
-			pending_identify = false;
-			identify_enqueue(id);
-		}
-
 		if (identify_phase == IDENT_IDLE) {
-			uint32_t id;
-			if (identify_dequeue(&id))
-				identify_queue_on(id);
+			struct identify_req req;
+			if (identify_dequeue(&req)) {
+				identify_id = req.id;
+				if (req.off_only)
+					identify_queue_off();
+				else
+					identify_queue_on(req.id);
+			}
 		}
 
-		if (identify_phase == IDENT_ON_QUEUED &&
-		    (identify_was_seen() || time(NULL) >= identify_deadline)) {
+		if (identify_phase == IDENT_ON_QUEUED && identify_was_seen()) {
 			powertag_clear_tx_queue();
 			identify_phase = IDENT_BLINKING;
 			identify_deadline = time(NULL) + 10;
 			identify_mark_seen();
 			LOG_INFO("PowerTag 0x%08x blinks red for 10s", identify_id);
+		} else if (identify_phase == IDENT_ON_QUEUED && time(NULL) >= identify_log_at) {
+			LOG_INFO("Waiting for PowerTag 0x%08x to transmit before the red blink can start", identify_id);
+			identify_log_at = time(NULL) + 30;
 		}
 
 		if (identify_phase == IDENT_BLINKING && time(NULL) >= identify_deadline)
 			identify_queue_off();
 
-		if (identify_phase == IDENT_OFF_QUEUED &&
-		    (identify_was_seen() || time(NULL) >= identify_deadline)) {
-			bool confirmed = identify_was_seen();
+		if (identify_phase == IDENT_OFF_QUEUED && identify_was_seen()) {
 			powertag_clear_tx_queue();
 			identify_phase = IDENT_IDLE;
 			identify_mark_seen();
-			if (confirmed)
-				LOG_INFO("PowerTag 0x%08x red blink stopped", identify_id);
-			else
-				LOG_INFO("PowerTag 0x%08x did not answer blink off, queue cleared", identify_id);
+			LOG_INFO("PowerTag 0x%08x red blink stopped", identify_id);
+		} else if (identify_phase == IDENT_OFF_QUEUED && time(NULL) >= identify_log_at) {
+			LOG_INFO("Waiting for PowerTag 0x%08x to transmit so the red blink can stop", identify_id);
+			identify_log_at = time(NULL) + 30;
 		}
 
 		ezsp_read_callbacks(200); 

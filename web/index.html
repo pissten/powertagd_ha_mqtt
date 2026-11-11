@@ -267,7 +267,7 @@ function signalBits(device) {
 
 function signal(device) {
   const bits = signalBits(device);
-  if (!bits) return "";
+  if (!bits) return `<div class="seen stale">Signal ikke mottatt</div>`;
   return `<div class="bar ${bits.cls}" title="Signal ${bits.lqi}"><i style="width:${bits.pct}%"></i></div><div class="seen">Signal ${bits.lqi} av 255</div>`;
 }
 
@@ -343,7 +343,7 @@ function listView(devices) {
     const bits = signalBits(device);
     const signalCell = bits
       ? `<div class="cell signalcell wide">${bits.lqi}<div class="bar ${bits.cls}"><i style="width:${bits.pct}%"></i></div></div>`
-      : `<div class="cell wide">–</div>`;
+      : `<div class="cell wide"><span class="seen stale">Ikke mottatt</span></div>`;
     const open = openId === device.id;
     const model = info.bits[0] || "–";
     return `<article class="row${open ? " open" : ""}">
