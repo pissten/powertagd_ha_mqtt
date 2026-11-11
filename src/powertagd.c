@@ -154,7 +154,7 @@ static bool identify_was_seen(void)
 static void identify_queue_on(uint32_t id)
 {
 	identify_id = id;
-	LOG_INFO("Sending red blink to PowerTag 0x%08x", id);
+	LOG_INFO("Sending identify blink to PowerTag 0x%08x", id);
 	powertag_clear_tx_queue();
 	if (!powertag_queue_identify(id, 10)) {
 		LOG_ERR("Could not queue identify for PowerTag 0x%08x", id);
@@ -1218,9 +1218,9 @@ int main(int argc, char **argv)
 			identify_phase = IDENT_BLINKING;
 			identify_deadline = time(NULL) + 10;
 			identify_mark_seen();
-			LOG_INFO("PowerTag 0x%08x blinks red for 10s", identify_id);
+			LOG_INFO("PowerTag 0x%08x identify blink for 10s", identify_id);
 		} else if (identify_phase == IDENT_ON_QUEUED && time(NULL) >= identify_log_at) {
-			LOG_INFO("Waiting for PowerTag 0x%08x to transmit before the red blink can start", identify_id);
+			LOG_INFO("Waiting for PowerTag 0x%08x to transmit before the identify blink can start", identify_id);
 			identify_log_at = time(NULL) + 30;
 		}
 
@@ -1231,9 +1231,9 @@ int main(int argc, char **argv)
 			powertag_clear_tx_queue();
 			identify_phase = IDENT_IDLE;
 			identify_mark_seen();
-			LOG_INFO("PowerTag 0x%08x red blink stopped", identify_id);
+			LOG_INFO("PowerTag 0x%08x identify blink stopped", identify_id);
 		} else if (identify_phase == IDENT_OFF_QUEUED && time(NULL) >= identify_log_at) {
-			LOG_INFO("Waiting for PowerTag 0x%08x to transmit so the red blink can stop", identify_id);
+			LOG_INFO("Waiting for PowerTag 0x%08x to transmit so the identify blink can stop", identify_id);
 			identify_log_at = time(NULL) + 30;
 		}
 
